@@ -598,7 +598,14 @@ public sealed class LayerTools
         // Works for ALL layer types: normal, text, shape, smart object
         var tempDoc = app.documents.add(w, h, origDoc.resolution, '_ps_thumb', NewDocumentMode.RGB, DocumentFill.TRANSPARENT);
         try {{
+            // Switch to source doc for reliable cross-document duplicate
+            app.activeDocument = origDoc;
+            var isBg = false;
+            try {{ isBg = targetLayer.isBackgroundLayer; }} catch(e) {{}}
+            if (isBg) targetLayer.isBackgroundLayer = false;
+            origDoc.activeLayer = targetLayer;
             targetLayer.duplicate(tempDoc, ElementPlacement.PLACEATBEGINNING);
+            app.activeDocument = tempDoc;
             var dupLayer = tempDoc.activeLayer;
             var db = dupLayer.bounds;
             dupLayer.translate(-db[0].value, -db[1].value);
@@ -744,7 +751,14 @@ public sealed class LayerTools
         // Works for ALL layer types: normal, text, shape, smart object
         var tempDoc=app.documents.add(w,h,origDoc.resolution,'_ps_export',NewDocumentMode.RGB,DocumentFill.TRANSPARENT);
         try{{
+            // Switch to source doc for reliable cross-document duplicate
+            app.activeDocument = origDoc;
+            var isBg = false;
+            try {{ isBg = targetLayer.isBackgroundLayer; }} catch(e) {{}}
+            if (isBg) targetLayer.isBackgroundLayer = false;
+            origDoc.activeLayer = targetLayer;
             targetLayer.duplicate(tempDoc, ElementPlacement.PLACEATBEGINNING);
+            app.activeDocument = tempDoc;
             // Move duplicated layer to top-left corner of temp doc
             var dupLayer = tempDoc.activeLayer;
             var db = dupLayer.bounds;
