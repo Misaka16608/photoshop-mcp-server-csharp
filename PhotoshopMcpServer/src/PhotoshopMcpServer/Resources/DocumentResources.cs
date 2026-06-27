@@ -24,7 +24,7 @@ public sealed class DocumentResources
         _logger = logger;
     }
 
-    [McpServerResource(Name = "photoshop://info")]
+    [McpServerResource(UriTemplate = "photoshop://info")]
     [Description("Get Photoshop application info: version and active document status.")]
     public async Task<object> GetPhotoshopInfo()
     {
@@ -45,7 +45,7 @@ public sealed class DocumentResources
         }
     }
 
-    [McpServerResource(Name = "photoshop://document/info")]
+    [McpServerResource(UriTemplate = "photoshop://document/info")]
     [Description("Get active document info: name, dimensions, resolution, layer count.")]
     public async Task<object> GetDocumentInfo()
     {
@@ -84,7 +84,7 @@ public sealed class DocumentResources
         }
     }
 
-    [McpServerResource(Name = "photoshop://document/layers")]
+    [McpServerResource(UriTemplate = "photoshop://document/layers")]
     [Description("Get all layers in the active document as a hierarchical tree.")]
     public async Task<object> GetLayers()
     {
