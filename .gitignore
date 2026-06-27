@@ -16,3 +16,4 @@ obj/
 .DS_Store
 Thumbs.db
 publish/
+.claude/
