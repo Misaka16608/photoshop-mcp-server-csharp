@@ -26,28 +26,28 @@ public sealed class DocumentResources
 
     [McpServerResource(UriTemplate = "photoshop://info")]
     [Description("Get Photoshop application info: version and active document status.")]
-    public async Task<object> GetPhotoshopInfo()
+    public async Task<string> GetPhotoshopInfo()
     {
         try
         {
             var version = await _ps.GetVersionAsync();
             var docName = await _ps.GetActiveDocumentNameAsync();
 
-            return new
+            return JsonSerializer.Serialize(new
             {
                 version,
                 has_active_document = docName != null,
-            };
+            });
         }
         catch (Exception ex)
         {
-            return new { error = ex.Message };
+            return JsonSerializer.Serialize(new { error = ex.Message });
         }
     }
 
     [McpServerResource(UriTemplate = "photoshop://document/info")]
     [Description("Get active document info: name, dimensions, resolution, layer count.")]
-    public async Task<object> GetDocumentInfo()
+    public async Task<string> GetDocumentInfo()
     {
         var script = @"
 (function() {
@@ -61,32 +61,32 @@ public sealed class DocumentResources
         {
             var raw = await _ps.ExecuteJavaScriptAsync(script);
             if (raw.StartsWith("ERR|"))
-                return new { error = raw[4..] };
+                return JsonSerializer.Serialize(new { error = raw[4..] });
 
             var parts = raw.Split('|');
             if (parts.Length >= 5 && parts[0] == "OK")
             {
-                return new
+                return JsonSerializer.Serialize(new
                 {
                     name = parts[1],
                     width = double.Parse(parts[2]),
                     height = double.Parse(parts[3]),
                     resolution = double.Parse(parts[4]),
                     layers_count = int.Parse(parts[5]),
-                };
+                });
             }
 
-            return new { error = "Failed to parse document info" };
+            return JsonSerializer.Serialize(new { error = "Failed to parse document info" });
         }
         catch (Exception ex)
         {
-            return new { error = ex.Message };
+            return JsonSerializer.Serialize(new { error = ex.Message });
         }
     }
 
     [McpServerResource(UriTemplate = "photoshop://document/layers")]
     [Description("Get all layers in the active document as a hierarchical tree.")]
-    public async Task<object> GetLayers()
+    public async Task<string> GetLayers()
     {
         var script = JsHelpers.JsonPolyfill + @"
 (function() {
@@ -179,27 +179,20 @@ public sealed class DocumentResources
         {
             var raw = await _ps.ExecuteJavaScriptAsync(script);
             if (raw.StartsWith("ERR|"))
-                return new { error = raw[4..] };
+                return JsonSerializer.Serialize(new { error = raw[4..] });
 
             if (raw.StartsWith("OK|"))
             {
                 var json = raw[3..];
-                try
-                {
-                    var parsed = JsonSerializer.Deserialize<JsonElement>(json);
-                    return new { layers = parsed.GetProperty("layers"), total_count = parsed.GetProperty("total_count").GetInt32() };
-                }
-                catch
-                {
-                    return new { error = "Failed to parse layer data" };
-                }
+                // Return the JSON string directly — already valid JSON from JS _json()
+                return json;
             }
 
-            return new { error = $"Unexpected result: {raw}" };
+            return JsonSerializer.Serialize(new { error = $"Unexpected result: {raw}" });
         }
         catch (Exception ex)
         {
-            return new { error = ex.Message };
+            return JsonSerializer.Serialize(new { error = ex.Message });
         }
     }
 }

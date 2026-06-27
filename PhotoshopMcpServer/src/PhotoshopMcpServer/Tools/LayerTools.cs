@@ -200,6 +200,9 @@ public sealed class LayerTools
     try {{ info.kind = target.kind; }} catch(e) {{ info.kind = -1; }}
     info.typename = target.typename;
 
+    // Detect text layers by probing textItem (kind is unreliable across PS versions)
+    try {{ info.isText = target.textItem != null; }} catch(e) {{ info.isText = false; }}
+
     var b = target.bounds;
     info.bl = b[0].value; info.bt = b[1].value;
     info.br = b[2].value; info.bb = b[3].value;
@@ -210,28 +213,37 @@ public sealed class LayerTools
     try {{ info.locked = target.locked; }} catch(e) {{ info.locked = false; }}
 
     // Text layer extras
-    if (info.kind === 2) {{
+    if (info.isText) {{
+        // Use Action Manager for all text properties (more reliable than DOM TextItem)
         try {{
-            var ti = target.textItem;
-            info.text = ti.contents;
-            info.fontName = ti.font;
-            info.fontSize = ti.size;
-            // Color via Action Manager (ti.color broken in PS 2020)
             var ref = new ActionReference();
             ref.putIdentifier(stringIDToTypeID('layer'), target.id);
             var desc = executeActionGet(ref);
             var td = desc.getObjectValue(stringIDToTypeID('textKey'));
+            // Text content
+            if (td.hasKey(stringIDToTypeID('textKey')))
+                info.text = td.getString(stringIDToTypeID('textKey'));
+            // Style range list
             var sl = td.getList(stringIDToTypeID('textStyleRange'));
             if (sl.count > 0) {{
                 var sr = sl.getObjectValue(0);
                 var ts = sr.getObjectValue(stringIDToTypeID('textStyle'));
+                // Font name
+                if (ts.hasKey(stringIDToTypeID('font')))
+                    info.fontName = ts.getString(stringIDToTypeID('font'));
+                // Font size
+                if (ts.hasKey(stringIDToTypeID('size')))
+                    info.fontSize = ts.getDouble(stringIDToTypeID('size'));
+                // Walk the textStyle chain to resolve inherited color
                 var cd = null;
-                if (ts.hasKey(stringIDToTypeID('color')))
-                    cd = ts.getObjectValue(stringIDToTypeID('color'));
-                else if (ts.hasKey(stringIDToTypeID('baseParentStyle'))) {{
-                    var bp = ts.getObjectValue(stringIDToTypeID('baseParentStyle'));
-                    if (bp.hasKey(stringIDToTypeID('color')))
-                        cd = bp.getObjectValue(stringIDToTypeID('color'));
+                var styleCursor = ts;
+                while (styleCursor && !cd) {{
+                    if (styleCursor.hasKey(stringIDToTypeID('color')))
+                        cd = styleCursor.getObjectValue(stringIDToTypeID('color'));
+                    else if (styleCursor.hasKey(stringIDToTypeID('baseParentStyle')))
+                        styleCursor = styleCursor.getObjectValue(stringIDToTypeID('baseParentStyle'));
+                    else
+                        break;
                 }}
                 if (cd && cd.hasKey(stringIDToTypeID('red'))) {{
                     info.tcR = Math.round(cd.getDouble(stringIDToTypeID('red')));
@@ -239,7 +251,7 @@ public sealed class LayerTools
                     info.tcB = Math.round(cd.getDouble(stringIDToTypeID('blue')));
                 }}
             }}
-        }} catch(e) {{}}
+        }} catch(e) {{ info.textError = 'AM: '+e.toString(); }}
     }}
 
     // LayerSet extras
@@ -274,6 +286,7 @@ public sealed class LayerTools
             var kindStr = props.GetValueOrDefault("kind", "-1");
             var kind = int.TryParse(kindStr, out var k) ? k : -1;
             var isLayerSet = props.GetValueOrDefault("typename") == "LayerSet";
+            var isText = props.GetValueOrDefault("isText", "false") == "true";
 
             var result = new Dictionary<string, object?>
             {
@@ -300,8 +313,8 @@ public sealed class LayerTools
             result["all_locked"] = props.GetValueOrDefault("allLocked", "false") == "true";
             result["locked"] = props.GetValueOrDefault("locked", "false") == "true";
 
-            // Text properties
-            if (kind == 2)
+            // Text properties (detected via isText, not kind)
+            if (kind == 2 || isText)
             {
                 result["text"] = props.GetValueOrDefault("text", "");
                 result["font_name"] = props.GetValueOrDefault("fontName", "");
@@ -315,6 +328,12 @@ public sealed class LayerTools
                 else
                 {
                     result["text_color"] = null;
+                }
+                // Surface any JS-side errors for diagnostics
+                foreach (var errKey in new[] { "textError", "fontError", "sizeError", "colorError" })
+                {
+                    if (props.TryGetValue(errKey, out var errVal) && !string.IsNullOrEmpty(errVal))
+                        result[errKey] = errVal;
                 }
             }
 
