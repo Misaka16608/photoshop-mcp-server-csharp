@@ -47,7 +47,7 @@ public sealed class SessionTools
                 resolution: doc.resolution,
                 mode: doc.mode.toString(),
                 bitsPerChannel: doc.bitsPerChannel,
-                layerCount: doc.artLayers.length,
+                layerCount: (function countAll(c) { var n=c.artLayers.length; for(var i=0;i<c.layerSets.length;i++) n+=countAll(c.layerSets[i]); return n; })(doc),
             };
         }
 

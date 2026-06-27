@@ -546,12 +546,11 @@ public sealed class LayerTools
 (function() {{
     var origDialogs = app.displayDialogs;
     app.displayDialogs = DialogModes.NO;
-    var origDoc, origRulerUnits, origActiveLayer;
+    var origDoc, origRulerUnits;
     try {{
         origDoc = app.activeDocument;
         if (!origDoc) return 'ERR|No active document';
         origRulerUnits = app.preferences.rulerUnits;
-        origActiveLayer = origDoc.activeLayer;
         app.preferences.rulerUnits = Units.PIXELS;
 
         function findByIndex(container, targetIdx, counter) {{
@@ -575,8 +574,8 @@ public sealed class LayerTools
         }} else {{
             var q = {searchValueJson}, ql = q.toLowerCase();
             function flatFind(c) {{
-                for (var i = 0; i < c.artLayers.length; i++) if (c.artLayers[i].name.toLowerCase().indexOf(ql) !== -1) return c.artLayers[i];
-                for (var j = 0; j < c.layerSets.length; j++) {{ var f = flatFind(c.layerSets[j]); if (f) return f; }}
+                for(var i=0;i<c.layerSets.length;i++) {{ if(c.layerSets[i].name.toLowerCase().indexOf(ql)!==-1) return c.layerSets[i]; var f=flatFind(c.layerSets[i]); if(f) return f; }}
+                for(var i=0;i<c.artLayers.length;i++) if(c.artLayers[i].name.toLowerCase().indexOf(ql)!==-1) return c.artLayers[i];
                 return null;
             }}
             targetLayer = flatFind(origDoc);
@@ -584,7 +583,6 @@ public sealed class LayerTools
         if (!targetLayer) return 'ERR|Layer not found';
         if (targetLayer.typename === 'LayerSet') return 'ERR|Cannot thumbnail a layer group';
 
-        origDoc.activeLayer = targetLayer;
         var bounds = targetLayer.bounds;
         var docW = origDoc.width.value, docH = origDoc.height.value;
         var left = Math.max(0, Math.floor(bounds[0].value));
@@ -594,25 +592,17 @@ public sealed class LayerTools
         var w = right - left, h = bottom - top;
         if (w <= 0 || h <= 0) return 'ERR|Layer has no visible pixels';
 
-        // Selection by Action Manager
-        var sd = new ActionDescriptor();
-        var sr = new ActionReference();
-        sr.putProperty(stringIDToTypeID('channel'), stringIDToTypeID('selection'));
-        sd.putReference(stringIDToTypeID('target'), sr);
-        var rect = new ActionDescriptor();
-        rect.putUnitDouble(stringIDToTypeID('top'), stringIDToTypeID('pixelsUnit'), top);
-        rect.putUnitDouble(stringIDToTypeID('left'), stringIDToTypeID('pixelsUnit'), left);
-        rect.putUnitDouble(stringIDToTypeID('bottom'), stringIDToTypeID('pixelsUnit'), bottom);
-        rect.putUnitDouble(stringIDToTypeID('right'), stringIDToTypeID('pixelsUnit'), right);
-        sd.putObject(stringIDToTypeID('to'), stringIDToTypeID('rectangle'), rect);
-        executeAction(stringIDToTypeID('set'), sd, DialogModes.NO);
-        origDoc.selection.copy(false);
-        origDoc.selection.deselect();
-        origDoc.activeLayer = origActiveLayer;
+        var origW = w, origH = h;
 
+        // Use layer.duplicate() instead of selection.copy()+paste()
+        // Works for ALL layer types: normal, text, shape, smart object
         var tempDoc = app.documents.add(w, h, origDoc.resolution, '_ps_thumb', NewDocumentMode.RGB, DocumentFill.TRANSPARENT);
         try {{
-            tempDoc.paste();
+            targetLayer.duplicate(tempDoc, ElementPlacement.PLACEATBEGINNING);
+            var dupLayer = tempDoc.activeLayer;
+            var db = dupLayer.bounds;
+            dupLayer.translate(-db[0].value, -db[1].value);
+
             if (w > {max_size} || h > {max_size}) {{
                 var pct = Math.min({max_size}/w*100, {max_size}/h*100);
                 tempDoc.resizeImage(new UnitValue(pct, '%'), new UnitValue(pct, '%'), undefined, ResampleMethod.BICUBICSHARPER);
@@ -623,7 +613,7 @@ public sealed class LayerTools
             tempDoc.saveAs(f, opts, true);
             var rw = tempDoc.width.value, rh = tempDoc.height.value;
             tempDoc.close(SaveOptions.DONOTSAVECHANGES);
-            return 'OK|'+rw+'|'+rh+'|'+w+'|'+h;
+            return 'OK|'+rw+'|'+rh+'|'+origW+'|'+origH;
         }} catch(e) {{
             tempDoc.close(SaveOptions.DONOTSAVECHANGES);
             throw e;
@@ -634,7 +624,7 @@ public sealed class LayerTools
         try {{
             if (origRulerUnits !== undefined) app.preferences.rulerUnits = origRulerUnits;
             app.displayDialogs = origDialogs;
-            if (origDoc) {{ app.activeDocument = origDoc; if (origActiveLayer) origDoc.activeLayer = origActiveLayer; origDoc.selection.deselect(); }}
+            if (origDoc) app.activeDocument = origDoc;
         }} catch(e) {{}}
     }}
 }})();
@@ -716,12 +706,11 @@ public sealed class LayerTools
 (function() {{
     var origDialogs = app.displayDialogs;
     app.displayDialogs = DialogModes.NO;
-    var origDoc, origRulerUnits, origActiveLayer;
+    var origDoc, origRulerUnits;
     try {{
         origDoc = app.activeDocument;
         if (!origDoc) return 'ERR|No active document';
         origRulerUnits = app.preferences.rulerUnits;
-        origActiveLayer = origDoc.activeLayer;
         app.preferences.rulerUnits = Units.PIXELS;
 
         function findByIndex(container, targetIdx, counter) {{
@@ -733,12 +722,15 @@ public sealed class LayerTools
         var targetLayer;
         if ('{searchField}'==='index') {{ targetLayer=findByIndex(origDoc,{searchValue}); }}
         else {{ var q={searchValueJson},ql=q.toLowerCase();
-            function flatFind(c) {{ for(var i=0;i<c.artLayers.length;i++) if(c.artLayers[i].name.toLowerCase().indexOf(ql)!==-1) return c.artLayers[i]; for(var j=0;j<c.layerSets.length;j++){{var f=flatFind(c.layerSets[j]);if(f)return f;}} return null; }}
+            function flatFind(c) {{
+                for(var i=0;i<c.layerSets.length;i++) {{ if(c.layerSets[i].name.toLowerCase().indexOf(ql)!==-1) return c.layerSets[i]; var f=flatFind(c.layerSets[i]); if(f) return f; }}
+                for(var i=0;i<c.artLayers.length;i++) if(c.artLayers[i].name.toLowerCase().indexOf(ql)!==-1) return c.artLayers[i];
+                return null;
+            }}
             targetLayer=flatFind(origDoc); }}
         if(!targetLayer) return 'ERR|Layer not found';
         if(targetLayer.typename==='LayerSet') return 'ERR|Cannot export a layer group';
 
-        origDoc.activeLayer = targetLayer;
         var bounds = targetLayer.bounds;
         var docW=origDoc.width.value, docH=origDoc.height.value;
         var left=Math.max(0,Math.floor(bounds[0].value)), top=Math.max(0,Math.floor(bounds[1].value));
@@ -748,23 +740,16 @@ public sealed class LayerTools
 
         var origW=w, origH=h;
 
-        var sd=new ActionDescriptor(), sRef=new ActionReference();
-        sRef.putProperty(stringIDToTypeID('channel'),stringIDToTypeID('selection'));
-        sd.putReference(stringIDToTypeID('target'),sRef);
-        var rect=new ActionDescriptor();
-        rect.putUnitDouble(stringIDToTypeID('top'),stringIDToTypeID('pixelsUnit'),top);
-        rect.putUnitDouble(stringIDToTypeID('left'),stringIDToTypeID('pixelsUnit'),left);
-        rect.putUnitDouble(stringIDToTypeID('bottom'),stringIDToTypeID('pixelsUnit'),bottom);
-        rect.putUnitDouble(stringIDToTypeID('right'),stringIDToTypeID('pixelsUnit'),right);
-        sd.putObject(stringIDToTypeID('to'),stringIDToTypeID('rectangle'),rect);
-        executeAction(stringIDToTypeID('set'),sd,DialogModes.NO);
-        origDoc.selection.copy(false);
-        origDoc.selection.deselect();
-        origDoc.activeLayer=origActiveLayer;
-
+        // Use layer.duplicate() instead of selection.copy()+paste()
+        // Works for ALL layer types: normal, text, shape, smart object
         var tempDoc=app.documents.add(w,h,origDoc.resolution,'_ps_export',NewDocumentMode.RGB,DocumentFill.TRANSPARENT);
         try{{
-            tempDoc.paste();
+            targetLayer.duplicate(tempDoc, ElementPlacement.PLACEATBEGINNING);
+            // Move duplicated layer to top-left corner of temp doc
+            var dupLayer = tempDoc.activeLayer;
+            var db = dupLayer.bounds;
+            dupLayer.translate(-db[0].value, -db[1].value);
+
             if({scale}>0 && {scale}<1.0){{ var sPct={scale}*100; tempDoc.resizeImage(new UnitValue(sPct,'%'),new UnitValue(sPct,'%'),undefined,ResampleMethod.BICUBICSHARPER); }}
             if({(trim ? "true" : "false")}){{ tempDoc.trim(TrimType.TRANSPARENT,true,true,true,true); }}
             var f=new File('{escapedPath}'); if(f.exists) f.remove();
@@ -777,7 +762,7 @@ public sealed class LayerTools
     }}catch(e){{ return 'ERR|'+e.toString(); }}
     finally {{
         try{{ if(origRulerUnits!==undefined) app.preferences.rulerUnits=origRulerUnits; app.displayDialogs=origDialogs;
-            if(origDoc){{ app.activeDocument=origDoc; if(origActiveLayer) origDoc.activeLayer=origActiveLayer; origDoc.selection.deselect(); }} }}catch(e){{}}
+            if(origDoc) app.activeDocument=origDoc; }}catch(e){{}}
     }}
 }})();
 ";
