@@ -68,9 +68,9 @@ Restart your MCP client session to load the new server. The server connects to P
 | `photoshop_create_text_layer` | Create text layer with position, size, color |
 | `photoshop_create_solid_color_layer` | Create solid color fill layer |
 | `photoshop_get_layer_info` | Get layer details by name or index (bounds, opacity, text props, blend mode) |
+| `photoshop_get_layers` | Get full layer tree with optional `fields` parameter for token-efficient filtering |
 | `photoshop_delete_layer` | Delete layer by name or index |
 | `photoshop_modify_layer` | Rename, reposition, change text, toggle visibility, opacity, blend mode |
-| `photoshop_get_layer_thumbnail` | Export layer as base64 PNG thumbnail |
 | `photoshop_export_layer` | Export layer as PNG file to disk (with scale & trim options) |
 
 ### Session
@@ -87,7 +87,12 @@ Restart your MCP client session to load the new server. The server connects to P
 |---|---|
 | `photoshop://info` | App version + active document status |
 | `photoshop://document/info` | Document name, dimensions, resolution, layer count |
-| `photoshop://document/layers` | Full hierarchical layer tree with properties |
+| `photoshop://document/layers` | Full hierarchical layer tree with `id`, `parentId`, text/font/color props |
+
+> 💡 **Field filtering:** The resource always returns all fields. For token-efficient queries with only the fields you need, use the `photoshop_get_layers` tool with a `fields` parameter:
+> ```
+> photoshop_get_layers fields="name,id,index,kind,visible,opacity,bounds,text,parentId"
+> ```
 
 ## Architecture
 

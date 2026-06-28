@@ -68,9 +68,9 @@ dotnet publish src/PhotoshopMcpServer -c Release -r win-x64 --self-contained -o 
 | `photoshop_create_text_layer` | 创建文字图层（位置、字号、颜色） |
 | `photoshop_create_solid_color_layer` | 创建纯色填充图层 |
 | `photoshop_get_layer_info` | 按名称或索引获取图层详情（边界、透明度、文字属性、混合模式等） |
+| `photoshop_get_layers` | 获取完整图层树，支持 `fields` 参数按需过滤字段，控制 token 消耗 |
 | `photoshop_delete_layer` | 按名称或索引删除图层 |
 | `photoshop_modify_layer` | 修改图层：重命名、移动、改文字、显隐、透明度、混合模式 |
-| `photoshop_get_layer_thumbnail` | 导出图层为 base64 编码的 PNG 缩略图 |
 | `photoshop_export_layer` | 导出图层为磁盘上的 PNG 文件（支持缩放和裁切） |
 
 ### 会话
@@ -87,7 +87,13 @@ dotnet publish src/PhotoshopMcpServer -c Release -r win-x64 --self-contained -o 
 |---|---|
 | `photoshop://info` | 应用版本 + 是否有活动文档 |
 | `photoshop://document/info` | 文档名称、尺寸、分辨率、图层数量 |
-| `photoshop://document/layers` | 完整图层树（含所有属性） |
+| `photoshop://document/layers` | 完整图层树（含 `id`、`parentId` 层级信息，支持 text/font/color 文字属性） |
+
+> 💡 **字段过滤：** 资源始终返回全量数据。如需按需裁剪字段以节省 token，请使用 `photoshop_get_layers` 工具并传入 `fields` 参数：
+> ```
+> photoshop_get_layers fields="name,id,index,kind,visible,opacity,bounds,text,parentId"
+> ```
+> 常用于 PS → Unity 还原工作流的图层匹配阶段，仅需 9 个字段即可完成名称关键词/位置/文本内容匹配。
 
 ## 架构
 
