@@ -34,12 +34,9 @@ The human becomes the reviewer, not the bottleneck.
 | **Token-efficient queries** | Ask for exactly the fields you need (e.g. `fields="name,id,index,kind,visible,opacity,bounds,text,parentId"`) |
 | **Batch automation** | Generate multiple artboards, export icon sets, apply branding across layers |
 
-### Real workflows enabled
+### Verified workflow
 
 - **PS → Unity UI reconstruction** — read PSD layer hierarchy, extract text/font/color/bounds per layer, feed into engine-side layout generation
-- **Asset pipeline automation** — export icons/logos/backgrounds at multiple scales in one invocation
-- **Design QA** — verify that layer naming conventions, font sizes, and colors match brand guidelines
-- **Prototype generation** — AI creates complete social media posts, banners, or UI mockups directly in Photoshop
 
 ## How it works
 
