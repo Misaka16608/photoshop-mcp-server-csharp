@@ -89,7 +89,7 @@ Project-level `.mcp.json` (recommended):
 {
   "mcpServers": {
     "photoshop": {
-      "command": "D:\\path\\to\\PhotoshopMcpServer\\publish\\photoshop-mcp-server.exe",
+      "command": "./PhotoshopMcpServer/publish/photoshop-mcp-server.exe",
       "env": {
         "PS_MCP_TIMEOUT": "30"
       }
@@ -104,7 +104,7 @@ Or in Claude Code / Claude Desktop settings (`settings.json`):
 {
   "mcpServers": {
     "photoshop": {
-      "command": "D:\\path\\to\\PhotoshopMcpServer\\publish\\photoshop-mcp-server.exe",
+      "command": "./PhotoshopMcpServer/publish/photoshop-mcp-server.exe",
       "env": {
         "PS_MCP_TIMEOUT": "30"
       }

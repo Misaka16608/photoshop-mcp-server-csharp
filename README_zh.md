@@ -89,7 +89,7 @@ dotnet publish src/PhotoshopMcpServer -c Release -r win-x64 --self-contained -o 
 {
   "mcpServers": {
     "photoshop": {
-      "command": "D:\\path\\to\\PhotoshopMcpServer\\publish\\photoshop-mcp-server.exe",
+      "command": "./PhotoshopMcpServer/publish/photoshop-mcp-server.exe",
       "env": {
         "PS_MCP_TIMEOUT": "30"
       }
@@ -104,7 +104,7 @@ dotnet publish src/PhotoshopMcpServer -c Release -r win-x64 --self-contained -o 
 {
   "mcpServers": {
     "photoshop": {
-      "command": "D:\\path\\to\\PhotoshopMcpServer\\publish\\photoshop-mcp-server.exe",
+      "command": "./PhotoshopMcpServer/publish/photoshop-mcp-server.exe",
       "env": {
         "PS_MCP_TIMEOUT": "30"
       }

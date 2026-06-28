@@ -129,7 +129,7 @@ dotnet publish -c Release -r win-x64 --self-contained -o publish  # deploy
 {
   "mcpServers": {
     "photoshop": {
-      "command": "D:\\_Code\\photoshop-python-api-mcp-server\\PhotoshopMcpServer\\publish\\photoshop-mcp-server.exe",
+      "command": "./PhotoshopMcpServer/publish/photoshop-mcp-server.exe",
       "env": { "PS_MCP_TIMEOUT": "30" }
     }
   }
