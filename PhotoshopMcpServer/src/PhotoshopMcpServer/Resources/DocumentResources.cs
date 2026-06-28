@@ -85,7 +85,7 @@ public sealed class DocumentResources
     }
 
     [McpServerResource(UriTemplate = "photoshop://document/layers")]
-    [Description("Get all layers in the active document as a hierarchical tree.")]
+    [Description("Get all layers in the active document as a hierarchical tree. Use photoshop_get_layers tool for field filtering.")]
     public async Task<string> GetLayers()
     {
         var script = JsHelpers.JsonPolyfill + @"
@@ -93,13 +93,18 @@ public sealed class DocumentResources
     var doc = app.activeDocument;
     if (!doc) return 'ERR|No active document';
 
-    function collectLayer(layer, idx) {
+    function collectLayer(layer, idx, parentId) {
         var info = {
             index: idx,
+            id: layer.id,
             name: layer.name,
             visible: layer.visible,
             type: 'layer',
         };
+        if (parentId !== undefined && parentId !== null)
+            info.parentId = parentId;
+        else
+            info.parentId = null;
         try { info.kind = layer.kind.toString(); } catch(e) { info.kind = 'Unknown'; }
         try {
             var b = layer.bounds;
@@ -132,12 +137,12 @@ public sealed class DocumentResources
         return info;
     }
 
-    function collectAll(container, startIdx) {
+    function collectAll(container, startIdx, parentId) {
         var result = [];
         var idx = startIdx || 0;
 
         for (var i = 0; i < container.artLayers.length; i++) {
-            result.push(collectLayer(container.artLayers[i], idx));
+            result.push(collectLayer(container.artLayers[i], idx, parentId));
             idx++;
         }
 
@@ -145,11 +150,16 @@ public sealed class DocumentResources
             var ls = container.layerSets[j];
             var group = {
                 index: idx,
+                id: ls.id,
                 name: ls.name,
                 visible: ls.visible,
                 type: 'group',
                 kind: 'LayerSet',
             };
+            if (parentId !== undefined && parentId !== null)
+                group.parentId = parentId;
+            else
+                group.parentId = null;
             try { group.opacity = ls.opacity; } catch(e) { group.opacity = 100; }
             try { group.blendMode = ls.blendMode.toString(); } catch(e) { group.blendMode = ''; }
             try {
@@ -160,7 +170,7 @@ public sealed class DocumentResources
             } catch(e) { group.bounds = null; group.width = 0; group.height = 0; }
 
             idx++;
-            var children = collectAll(ls, idx);
+            var children = collectAll(ls, idx, ls.id);
             group.children = children.layers;
             group.childrenCount = children.layers.length;
             result.push(group);
@@ -170,7 +180,7 @@ public sealed class DocumentResources
         return { layers: result, nextIdx: idx };
     }
 
-    var collected = collectAll(doc, 0);
+    var collected = collectAll(doc, 0, null);
     return 'OK|' + _json({ layers: collected.layers, total_count: collected.layers.length });
 })();
 ";

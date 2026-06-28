@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
+using PhotoshopMcpServer.Infrastructure;
 using PhotoshopMcpServer.Services;
 
 namespace PhotoshopMcpServer.Tools;
@@ -541,159 +542,6 @@ public sealed class LayerTools
         }
     }
 
-    // ==================================================================
-    // get_layer_thumbnail
-    // ==================================================================
-
-    [McpServerTool(Name = "photoshop_get_layer_thumbnail")]
-    [Description("Export a layer as a base64-encoded PNG thumbnail.")]
-    public async Task<object> GetLayerThumbnail(
-        [Description("Layer name (fuzzy match)")] string layer_name = "",
-        [Description("Layer index (0-based, takes priority)")] int layer_index = -1,
-        [Description("Maximum width/height of thumbnail")] int max_size = 256)
-    {
-        if (string.IsNullOrEmpty(layer_name) && layer_index < 0)
-            return new { success = false, error = "Must specify layer_name or layer_index" };
-
-        var searchField = layer_index >= 0 ? "index" : "name";
-        var searchValue = layer_index >= 0 ? layer_index.ToString() : JsonSerializer.Serialize(layer_name);
-        var searchValueJson = JsonSerializer.Serialize(layer_name);
-        var tempPath = Path.GetTempFileName() + ".png";
-        var escapedPath = tempPath.Replace("\\", "\\\\");
-
-        var script = $@"
-(function() {{
-    var origDialogs = app.displayDialogs;
-    app.displayDialogs = DialogModes.NO;
-    var origDoc, origRulerUnits;
-    try {{
-        origDoc = app.activeDocument;
-        if (!origDoc) return 'ERR|No active document';
-        origRulerUnits = app.preferences.rulerUnits;
-        app.preferences.rulerUnits = Units.PIXELS;
-
-        function findByIndex(container, targetIdx, counter) {{
-            if (counter === undefined) counter = {{v: 0}};
-            for (var i = 0; i < container.artLayers.length; i++) {{
-                if (counter.v === targetIdx) return container.artLayers[i];
-                counter.v++;
-            }}
-            for (var j = 0; j < container.layerSets.length; j++) {{
-                if (counter.v === targetIdx) return container.layerSets[j];
-                counter.v++;
-                var found = findByIndex(container.layerSets[j], targetIdx, counter);
-                if (found) return found;
-            }}
-            return null;
-        }}
-
-        var targetLayer;
-        if ('{searchField}' === 'index') {{
-            targetLayer = findByIndex(origDoc, {searchValue});
-        }} else {{
-            var q = {searchValueJson}, ql = q.toLowerCase();
-            function flatFind(c) {{
-                for(var i=0;i<c.layerSets.length;i++) {{ if(c.layerSets[i].name.toLowerCase().indexOf(ql)!==-1) return c.layerSets[i]; var f=flatFind(c.layerSets[i]); if(f) return f; }}
-                for(var i=0;i<c.artLayers.length;i++) if(c.artLayers[i].name.toLowerCase().indexOf(ql)!==-1) return c.artLayers[i];
-                return null;
-            }}
-            targetLayer = flatFind(origDoc);
-        }}
-        if (!targetLayer) return 'ERR|Layer not found';
-        if (targetLayer.typename === 'LayerSet') return 'ERR|Cannot thumbnail a layer group';
-
-        var bounds = targetLayer.bounds;
-        var docW = origDoc.width.value, docH = origDoc.height.value;
-        var left = Math.max(0, Math.floor(bounds[0].value));
-        var top = Math.max(0, Math.floor(bounds[1].value));
-        var right = Math.min(docW, Math.ceil(bounds[2].value));
-        var bottom = Math.min(docH, Math.ceil(bounds[3].value));
-        var w = right - left, h = bottom - top;
-        if (w <= 0 || h <= 0) return 'ERR|Layer has no visible pixels';
-
-        var origW = w, origH = h;
-
-        // Use layer.duplicate() instead of selection.copy()+paste()
-        // Works for ALL layer types: normal, text, shape, smart object
-        var tempDoc = app.documents.add(w, h, origDoc.resolution, '_ps_thumb', NewDocumentMode.RGB, DocumentFill.TRANSPARENT);
-        try {{
-            // Switch to source doc for reliable cross-document duplicate
-            app.activeDocument = origDoc;
-            var isBg = false;
-            try {{ isBg = targetLayer.isBackgroundLayer; }} catch(e) {{}}
-            if (isBg) targetLayer.isBackgroundLayer = false;
-            origDoc.activeLayer = targetLayer;
-            targetLayer.duplicate(tempDoc, ElementPlacement.PLACEATBEGINNING);
-            app.activeDocument = tempDoc;
-            var dupLayer = tempDoc.activeLayer;
-            var db = dupLayer.bounds;
-            dupLayer.translate(-db[0].value, -db[1].value);
-
-            if (w > {max_size} || h > {max_size}) {{
-                var pct = Math.min({max_size}/w*100, {max_size}/h*100);
-                tempDoc.resizeImage(new UnitValue(pct, '%'), new UnitValue(pct, '%'), undefined, ResampleMethod.BICUBICSHARPER);
-            }}
-            var f = new File('{escapedPath}');
-            if (f.exists) f.remove();
-            var opts = new PNGSaveOptions(); opts.compression = 9;
-            tempDoc.saveAs(f, opts, true);
-            var rw = tempDoc.width.value, rh = tempDoc.height.value;
-            tempDoc.close(SaveOptions.DONOTSAVECHANGES);
-            return 'OK|'+rw+'|'+rh+'|'+origW+'|'+origH;
-        }} catch(e) {{
-            tempDoc.close(SaveOptions.DONOTSAVECHANGES);
-            throw e;
-        }}
-    }} catch(e) {{
-        return 'ERR|'+e.toString();
-    }} finally {{
-        try {{
-            if (origRulerUnits !== undefined) app.preferences.rulerUnits = origRulerUnits;
-            app.displayDialogs = origDialogs;
-            if (origDoc) app.activeDocument = origDoc;
-        }} catch(e) {{}}
-    }}
-}})();
-";
-
-        try
-        {
-            var raw = await _ps.ExecuteJavaScriptAsync(script, timeoutMs: 30_000);
-            if (raw.StartsWith("ERR|"))
-            {
-                TryDelete(tempPath);
-                return new { success = false, error = raw[4..] };
-            }
-
-            if (!File.Exists(tempPath) || new FileInfo(tempPath).Length == 0)
-            {
-                TryDelete(tempPath);
-                return new { success = false, error = "Thumbnail export failed — no output file generated" };
-            }
-
-            var imgData = await File.ReadAllBytesAsync(tempPath);
-            TryDelete(tempPath);
-
-            return new
-            {
-                success = true,
-                thumbnail_base64 = Convert.ToBase64String(imgData),
-                format = "png",
-                size_bytes = imgData.Length,
-                layer_name = layer_name,
-            };
-        }
-        catch (TimeoutException)
-        {
-            TryDelete(tempPath);
-            return new { success = false, error = "Operation timed out." };
-        }
-        catch (Exception ex)
-        {
-            TryDelete(tempPath);
-            return new { success = false, error = ex.Message };
-        }
-    }
 
     // ==================================================================
     // export_layer
@@ -829,6 +677,135 @@ public sealed class LayerTools
                 original_height = origH,
                 layer_name = layer_name,
             };
+        }
+        catch (TimeoutException)
+        {
+            return new { success = false, error = "Operation timed out." };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    // ==================================================================
+    // get_layers (field-filtered layer listing)
+    // ==================================================================
+
+    [McpServerTool(Name = "photoshop_get_layers")]
+    [Description("Get all layers with optional field filtering. Use fields to limit output (comma-separated). Without fields, returns all properties.")]
+    public async Task<object> GetLayers(
+        [Description("Comma-separated field names to include. Empty = all fields.")] string fields = "")
+    {
+        var script = JsHelpers.JsonPolyfill + @"
+(function() {
+    var doc = app.activeDocument;
+    if (!doc) return 'ERR|No active document';
+
+    function collectLayer(layer, idx, parentId) {
+        var info = {
+            index: idx,
+            id: layer.id,
+            name: layer.name,
+            visible: layer.visible,
+            type: 'layer',
+        };
+        if (parentId !== undefined && parentId !== null)
+            info.parentId = parentId;
+        else
+            info.parentId = null;
+        try { info.kind = layer.kind.toString(); } catch(e) { info.kind = 'Unknown'; }
+        try {
+            var b = layer.bounds;
+            info.bounds = { left: b[0].value, top: b[1].value, right: b[2].value, bottom: b[3].value };
+            info.width = b[2].value - b[0].value;
+            info.height = b[3].value - b[1].value;
+        } catch(e) { info.bounds = null; info.width = 0; info.height = 0; }
+        try { info.opacity = layer.opacity; } catch(e) { info.opacity = 100; }
+        try { info.blendMode = layer.blendMode.toString(); } catch(e) { info.blendMode = ''; }
+        try {
+            if (layer.kind === LayerKind.TEXT) {
+                var ti = layer.textItem;
+                info.text = ti.contents;
+                try { info.fontName = ti.font; } catch(e) {}
+                try { info.fontSize = ti.size; } catch(e) {}
+                try {
+                    var c = ti.color;
+                    info.textColor = { red: c.rgb.red, green: c.rgb.green, blue: c.rgb.blue };
+                } catch(e) { info.textColor = null; }
+                try { info.alignment = ti.justification.toString(); } catch(e) {}
+            }
+        } catch(e) {}
+        try { info.allLocked = layer.allLocked; } catch(e) { info.allLocked = false; }
+        try { info.locked = layer.locked; } catch(e) { info.locked = false; }
+        return info;
+    }
+
+    function collectAll(container, startIdx, parentId) {
+        var result = [];
+        var idx = startIdx || 0;
+        for (var i = 0; i < container.artLayers.length; i++) {
+            result.push(collectLayer(container.artLayers[i], idx, parentId));
+            idx++;
+        }
+        for (var j = 0; j < container.layerSets.length; j++) {
+            var ls = container.layerSets[j];
+            var group = {
+                index: idx,
+                id: ls.id,
+                name: ls.name,
+                visible: ls.visible,
+                type: 'group',
+                kind: 'LayerSet',
+            };
+            if (parentId !== undefined && parentId !== null)
+                group.parentId = parentId;
+            else
+                group.parentId = null;
+            try { group.opacity = ls.opacity; } catch(e) { group.opacity = 100; }
+            try { group.blendMode = ls.blendMode.toString(); } catch(e) { group.blendMode = ''; }
+            try {
+                var b = ls.bounds;
+                group.bounds = { left: b[0].value, top: b[1].value, right: b[2].value, bottom: b[3].value };
+                group.width = b[2].value - b[0].value;
+                group.height = b[3].value - b[1].value;
+            } catch(e) { group.bounds = null; group.width = 0; group.height = 0; }
+            idx++;
+            var children = collectAll(ls, idx, ls.id);
+            group.children = children.layers;
+            group.childrenCount = children.layers.length;
+            result.push(group);
+            idx = children.nextIdx;
+        }
+        return { layers: result, nextIdx: idx };
+    }
+
+    var collected = collectAll(doc, 0, null);
+    return 'OK|' + _json({ layers: collected.layers, total_count: collected.layers.length });
+})();
+";
+
+        try
+        {
+            var raw = await _ps.ExecuteJavaScriptAsync(script);
+            if (raw.StartsWith("ERR|"))
+                return new { success = false, error = raw[4..] };
+
+            if (raw.StartsWith("OK|"))
+            {
+                var json = raw[3..];
+
+                if (!string.IsNullOrWhiteSpace(fields))
+                {
+                    json = JsHelpers.FilterLayerFields(json, fields);
+                }
+
+                // Parse JSON and return as object so framework serializes it properly
+                var obj = JsonSerializer.Deserialize<object>(json);
+                return new { success = true, layers = obj };
+            }
+
+            return new { success = false, error = $"Unexpected result: {raw}" };
         }
         catch (TimeoutException)
         {

@@ -1,3 +1,5 @@
+using System.Text.Json.Nodes;
+
 namespace PhotoshopMcpServer.Infrastructure;
 
 /// <summary>
@@ -41,5 +43,53 @@ var _json = function(obj) {
                 .Replace("'", "\\'")
                 .Replace("\n", "\\n")
                 .Replace("\r", "\\r");
+    }
+
+    /// <summary>
+    /// Filters layer JSON to only include requested fields.
+    /// Structural fields (type, children, childrenCount) are always preserved.
+    /// </summary>
+    internal static string FilterLayerFields(string json, string fieldsParam)
+    {
+        var fieldSet = new HashSet<string>(
+            fieldsParam.Split(',').Select(f => f.Trim()),
+            StringComparer.OrdinalIgnoreCase);
+
+        var root = JsonNode.Parse(json);
+        if (root is null) return json;
+
+        var layers = root["layers"];
+        if (layers is null) return json;
+
+        FilterLayersArray(layers.AsArray(), fieldSet);
+
+        return root.ToJsonString();
+    }
+
+    internal static void FilterLayersArray(JsonArray layers, HashSet<string> fields)
+    {
+        foreach (var layer in layers)
+        {
+            if (layer is not JsonObject obj) continue;
+
+            var toRemove = new List<string>();
+            foreach (var kvp in obj)
+            {
+                var key = kvp.Key;
+                if (key is "type" or "children" or "childrenCount")
+                    continue;
+                if (!fields.Contains(key))
+                    toRemove.Add(key);
+            }
+
+            foreach (var key in toRemove)
+                obj.Remove(key);
+
+            if (obj.TryGetPropertyValue("children", out var children) &&
+                children is JsonArray childArray)
+            {
+                FilterLayersArray(childArray, fields);
+            }
+        }
     }
 }
