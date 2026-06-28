@@ -724,15 +724,118 @@ public sealed class LayerTools
         try { info.opacity = layer.opacity; } catch(e) { info.opacity = 100; }
         try { info.blendMode = layer.blendMode.toString(); } catch(e) { info.blendMode = ''; }
         try {
-            if (layer.kind === LayerKind.TEXT) {
+            // Use textItem probe to detect text layers (kind is unreliable across PS versions)
+            var isText = false;
+            try { isText = layer.textItem != null; } catch(e) {}
+            if (isText) {
                 var ti = layer.textItem;
                 info.text = ti.contents;
-                try { info.fontName = ti.font; } catch(e) {}
-                try { info.fontSize = ti.size; } catch(e) {}
+
+                // Prefer Action Manager for reliable text properties
+                // (DOM ti.size returns UnitValue object that fails JSON serialization;
+                //  ti.color throws on inherited/mixed-format text)
                 try {
-                    var c = ti.color;
-                    info.textColor = { red: c.rgb.red, green: c.rgb.green, blue: c.rgb.blue };
-                } catch(e) { info.textColor = null; }
+                    var ref = new ActionReference();
+                    ref.putIdentifier(stringIDToTypeID('layer'), layer.id);
+                    var desc = executeActionGet(ref);
+                    if (desc.hasKey(stringIDToTypeID('textKey'))) {
+                        var td = desc.getObjectValue(stringIDToTypeID('textKey'));
+                        if (td.hasKey(stringIDToTypeID('textStyleRange'))) {
+                            var sl = td.getList(stringIDToTypeID('textStyleRange'));
+                            if (sl.count > 0) {
+                                var sr = sl.getObjectValue(0);
+                                if (sr.hasKey(stringIDToTypeID('textStyle'))) {
+                                    var ts = sr.getObjectValue(stringIDToTypeID('textStyle'));
+                                    // Walk style chain for ALL properties (font, size, color)
+                                    var sc = ts;
+                                    while (sc) {
+                                        if (info.font_name === undefined && sc.hasKey(stringIDToTypeID('font')))
+                                            info.font_name = sc.getString(stringIDToTypeID('font'));
+                                        if (info.font_size === undefined && sc.hasKey(stringIDToTypeID('impliedFontSize'))) {
+                                            // impliedFontSize = size × transform scale — matches Character panel
+                                            try { info.font_size = sc.getDouble(stringIDToTypeID('impliedFontSize')); }
+                                            catch(e) { info.font_size = sc.getUnitDoubleValue(stringIDToTypeID('impliedFontSize')).value; }
+                                        }
+                                        if (info.font_size === undefined && sc.hasKey(stringIDToTypeID('size'))) {
+                                            try {
+                                                var ud = sc.getUnitDoubleValue(stringIDToTypeID('size'));
+                                                info.font_size = ud.value;
+                                            } catch(e) {
+                                                info.font_size = sc.getDouble(stringIDToTypeID('size'));
+                                            }
+                                        }
+                                        if (info.text_color === undefined && sc.hasKey(stringIDToTypeID('color'))) {
+                                            var cd = sc.getObjectValue(stringIDToTypeID('color'));
+                                            if (cd && cd.hasKey(stringIDToTypeID('red'))) {
+                                                info.text_color = {
+                                                    red: Math.round(cd.getDouble(stringIDToTypeID('red'))),
+                                                    green: Math.round(cd.getDouble(stringIDToTypeID('green'))),
+                                                    blue: Math.round(cd.getDouble(stringIDToTypeID('blue')))
+                                                };
+                                            }
+                                        }
+                                        if (info.font_name !== undefined &&
+                                            info.font_size !== undefined &&
+                                            info.text_color !== undefined)
+                                            break;
+                                        if (sc.hasKey(stringIDToTypeID('baseParentStyle')))
+                                            sc = sc.getObjectValue(stringIDToTypeID('baseParentStyle'));
+                                        else
+                                            break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch(e) {}
+
+                // Detect layer transform from textKey.transform (always present for
+                // Free-Transformed text layers — nested inside textKey, not at layer level)
+                try {
+                    if (desc && desc.hasKey(stringIDToTypeID('textKey'))) {
+                        var td = desc.getObjectValue(stringIDToTypeID('textKey'));
+                        if (td.hasKey(stringIDToTypeID('transform'))) {
+                            var tf = td.getObjectValue(stringIDToTypeID('transform'));
+                            var xx = tf.getDouble(stringIDToTypeID('xx'));
+                            var xy = tf.getDouble(stringIDToTypeID('xy'));
+                            var yx = tf.getDouble(stringIDToTypeID('yx'));
+                            var yy = tf.getDouble(stringIDToTypeID('yy'));
+                            var scaleX = Math.sqrt(xx * xx + xy * xy);
+                            var scaleY = Math.sqrt(yx * yx + yy * yy);
+                            if (Math.abs(scaleX - 1.0) > 0.001 || Math.abs(scaleY - 1.0) > 0.001) {
+                                info.transform_scale_x = scaleX;
+                                info.transform_scale_y = scaleY;
+                                if (info.font_size !== undefined) {
+                                    // font_size is now impliedFontSize (already scaled)
+                                    // Store the raw pre-transform size for reference
+                                    info.font_size_raw = info.font_size / scaleY;
+                                }
+                            }
+                        }
+                    }
+                } catch(e) {}
+
+                // DOM fallback for font_name / text_color
+                if (info.font_name === undefined) {
+                    try { info.font_name = ti.font; } catch(e) {}
+                }
+                // DOM fallback for font_size (AM impliedFontSize is primary)
+                if (info.font_size === undefined) {
+                    try { info.font_size = parseFloat(String(ti.size)); } catch(e) {}
+                }
+                if (info.text_color === undefined) {
+                    try {
+                        var c = ti.color;
+                        if (c && c.rgb) {
+                            info.text_color = {
+                                red: Math.round(c.rgb.red),
+                                green: Math.round(c.rgb.green),
+                                blue: Math.round(c.rgb.blue)
+                            };
+                        }
+                    } catch(e) {}
+                }
+
                 try { info.alignment = ti.justification.toString(); } catch(e) {}
             }
         } catch(e) {}
@@ -814,6 +917,171 @@ public sealed class LayerTools
         catch (Exception ex)
         {
             return new { success = false, error = ex.Message };
+        }
+    }
+
+    // ==================================================================
+    // debug_layer — dump all AM descriptor keys for diagnosis
+    // ==================================================================
+
+    [McpServerTool(Name = "photoshop_debug_layer")]
+    [Description("Dump ALL Action Manager descriptor keys for a layer. Use this to discover where transform/font/color data lives.")]
+    public async Task<object> DebugLayer(
+        [Description("Layer name (fuzzy match)")] string layer_name = "",
+        [Description("Layer index (0-based, takes priority)")] int layer_index = -1)
+    {
+        if (string.IsNullOrEmpty(layer_name) && layer_index < 0)
+            return new { success = false, error = "Must specify layer_name or layer_index" };
+
+        var searchField = layer_index >= 0 ? "index" : "name";
+        var searchValue = layer_index >= 0 ? layer_index.ToString() : JsonSerializer.Serialize(layer_name);
+        var searchValueJson = JsonSerializer.Serialize(layer_name);
+
+        var script = JsHelpers.JsonPolyfill + @"
+(function() {
+    var doc = app.activeDocument;
+    if (!doc) return 'ERR|No active document';
+
+    // Find layer
+    function flatten(c, r) { for (var i=0;i<c.artLayers.length;i++) r.push(c.artLayers[i]); for (var j=0;j<c.layerSets.length;j++){r.push(c.layerSets[j]);flatten(c.layerSets[j],r);} }
+    var all = []; flatten(doc, all);
+    var layer = null;
+    if ('" + searchField + @"' === 'index') {
+        if (" + searchValue + @" >= 0 && " + searchValue + @" < all.length) layer = all[" + searchValue + @"];
+    } else {
+        var q = " + searchValueJson + @", ql = q.toLowerCase();
+        for (var i=0; i<all.length; i++) if (all[i].name.toLowerCase().indexOf(ql) !== -1) { layer = all[i]; break; }
+    }
+    if (!layer) return 'ERR|Layer not found';
+
+    // Helper: convert TypeID to string
+    function tidStr(tid) {
+        try { return typeIDToStringID(tid); } catch(e) { return '0x' + tid.toString(16); }
+    }
+
+    // Helper: dump a descriptor recursively
+    function dumpDesc(d, depth) {
+        if (!d || depth > 4) return depth > 4 ? '_maxDepth_' : null;
+        var r = {};
+        try {
+            var c = d.count;
+            for (var i = 0; i < c; i++) {
+                var key = d.getKey(i);
+                var keyStr = tidStr(key);
+                try {
+                    var vt = d.getType(key);
+                    if (vt === DescValueType.BOOLEANTYPE) { r[keyStr] = d.getBoolean(key); }
+                    else if (vt === DescValueType.INTEGERTYPE) { r[keyStr] = d.getInteger(key); }
+                    else if (vt === DescValueType.DOUBLETYPE) { r[keyStr] = d.getDouble(key); }
+                    else if (vt === DescValueType.STRINGTYPE) { r[keyStr] = d.getString(key); }
+                    else if (vt === DescValueType.UNITDOUBLE) {
+                        try { var ud = d.getUnitDoubleValue(key); r[keyStr] = { _unit: ud.value, _type: tidStr(ud.type) }; }
+                        catch(e) { r[keyStr] = d.getDouble(key); }
+                    }
+                    else if (vt === DescValueType.OBJECTTYPE) {
+                        try { r[keyStr] = dumpDesc(d.getObjectValue(key), depth+1); }
+                        catch(e) { r[keyStr] = { _error: e.toString() }; }
+                    }
+                    else if (vt === DescValueType.LISTTYPE) {
+                        try {
+                            var list = d.getList(key);
+                            var arr = [];
+                            for (var j = 0; j < list.count; j++) {
+                                try { arr.push(dumpDesc(list.getObjectValue(j), depth+1)); }
+                                catch(e) { arr.push({ _error: e.toString() }); }
+                            }
+                            r[keyStr] = arr;
+                        } catch(e2) { r[keyStr] = { _error: e2.toString() }; }
+                    }
+                    else if (vt === DescValueType.ENUMERATEDTYPE) {
+                        try { r[keyStr] = { _enum: tidStr(d.getEnumerationType(key)) + ':' + tidStr(d.getEnumerationValue(key)) }; }
+                        catch(e) { r[keyStr] = { _enumError: e.toString() }; }
+                    }
+                    else if (vt === DescValueType.REFERENCETYPE) {
+                        try { var rr = d.getReference(key); r[keyStr] = { _ref: dumpDesc(rr.getDesiredClass ? null : rr, 0) }; }
+                        catch(e) { r[keyStr] = { _ref: 'unreadable' }; }
+                    }
+                    else { r[keyStr] = { _unknownType: vt }; }
+                } catch(e2) { r[keyStr] = { _error: e2.toString() }; }
+            }
+        } catch(e) { r._descError = e.toString(); }
+        return r;
+    }
+
+    // ---- 1) Dump full layer descriptor ----
+    var result = { layer_name: layer.name, layer_id: layer.id, layer_kind: '' };
+    try { result.layer_kind = layer.kind.toString(); } catch(e) {}
+
+    try {
+        var ref1 = new ActionReference();
+        ref1.putIdentifier(stringIDToTypeID('layer'), layer.id);
+        result.fullDescriptor = dumpDesc(executeActionGet(ref1), 0);
+    } catch(e) { result.fullDescriptor_error = e.toString(); }
+
+    // ---- 2) Try transform via putProperty stringID ----
+    try {
+        var r2 = new ActionReference();
+        r2.putProperty(stringIDToTypeID('property'), stringIDToTypeID('transform'));
+        r2.putIdentifier(stringIDToTypeID('layer'), layer.id);
+        result.transform_stringID = dumpDesc(executeActionGet(r2), 0);
+    } catch(e) { result.transform_stringID_error = e.toString(); }
+
+    // ---- 3) Try transform via putProperty charID ----
+    try {
+        var r3 = new ActionReference();
+        r3.putProperty(charIDToTypeID('Prpr'), charIDToTypeID('Trnf'));
+        r3.putIdentifier(charIDToTypeID('Lyr '), layer.id);
+        result.transform_charID = dumpDesc(executeActionGet(r3), 0);
+    } catch(e) { result.transform_charID_error = e.toString(); }
+
+    // ---- 4) Try transform via activate + target ----
+    try {
+        var prevActive = doc.activeLayer;
+        doc.activeLayer = layer;
+        var r4 = new ActionReference();
+        r4.putEnumerated(charIDToTypeID('Lyr '), charIDToTypeID('Ordn'), charIDToTypeID('Trgt'));
+        result.transform_targetDescriptor = dumpDesc(executeActionGet(r4), 0);
+        try { doc.activeLayer = prevActive; } catch(e) {}
+    } catch(e) { result.transform_target_error = e.toString(); }
+
+    // ---- 5) DOM textItem properties ----
+    try {
+        var ti = layer.textItem;
+        if (ti) {
+            result.dom_textItem = {};
+            try { result.dom_textItem.contents = ti.contents; } catch(e) {}
+            try { var sz = ti.size; result.dom_textItem.size_value = sz.value; result.dom_textItem.size_type = tidStr(sz.type); result.dom_textItem.size_string = String(sz); } catch(e) { result.dom_textItem.size_error = e.toString(); }
+            try { result.dom_textItem.font = ti.font; } catch(e) {}
+            try { var c = ti.color; result.dom_textItem.color = { red: c.rgb.red, green: c.rgb.green, blue: c.rgb.blue }; } catch(e) {}
+        }
+    } catch(e) { result.dom_textItem_error = e.toString(); }
+
+    return 'OK|' + _json(result);
+})();
+";
+
+        try
+        {
+            var raw = await _ps.ExecuteJavaScriptAsync(script, timeoutMs: 30_000);
+            if (raw.StartsWith("ERR|"))
+                return new { success = false, error = raw[4..] };
+
+            if (raw.StartsWith("OK|"))
+            {
+                var json = raw[3..];
+                var obj = JsonSerializer.Deserialize<object>(json);
+                return new { success = true, debug = obj };
+            }
+
+            return new { success = false, error = $"Unexpected result: {raw}" };
+        }
+        catch (TimeoutException)
+        {
+            return new { success = false, error = "Operation timed out." };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message, detailed_error = ex.ToString() };
         }
     }
 
